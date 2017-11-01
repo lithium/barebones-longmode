@@ -1,38 +1,55 @@
-TARGET := i686-elf
+ARCH := x86_64
+TARGET := $(ARCH)-elf
 
-GCC := $(TARGET)-gcc
-GCCGO := $(TARGET)-gccgo
+LD := $(TARGET)-ld
 GAS := $(TARGET)-as
+OBJDUMP := $(TARGET)-objdump
 GRUB_MKRESCUE := grub-mkrescue
+QEMU := qemu-system-$(ARCH)
+
+LDFLAGS := -g -z max-page-size=0x1000
+ASFLAGS := -g
 
 OBJ := build
 ISO_STAGING := $(OBJ)/iso
 KERNEL := $(OBJ)/kernel.elf
-BOOTABLE_ISO := barebones-queue.iso
+BOOTABLE_ISO := barebones-longmode.iso
 
 sources := $(wildcard src/**/*.s)
 objects := $(addprefix $(OBJ)/, $(notdir $(sources:%.s=%.o)))
+grub_config := src/boot/grub.cfg
+linker_script := src/boot/linker.ld
 
+all: qemu 
 
-default: build $(BOOTABLE_ISO)
+iso: $(BOOTABLE_ISO)
 
-build:
-	mkdir -p $(OBJ)
 
 # assemble .s -> .o
 $(OBJ)/%.o: src/**/%.s
-	$(GAS) $^ -o $@
+	@mkdir -p $(OBJ)
+	$(GAS) $(ASFLAGS) $^ -o $@
 
 # link kernel
-$(KERNEL): $(objects)
-	$(GCC) -T src/boot/linker.ld -o $@ -ffreestanding -nostdlib -lgcc $^
+$(KERNEL): $(objects) $(linker_script)
+	$(LD) $(LDFLAGS) -T $(linker_script) -o $@ $(objects)
 
 # bootable iso 
-$(BOOTABLE_ISO): $(KERNEL)
+$(BOOTABLE_ISO): $(KERNEL) $(grub_config)
 	mkdir -p $(OBJ)/iso/boot/grub
 	cp $(KERNEL) $(OBJ)/iso/boot/
-	cp grub/grub.cfg $(OBJ)/iso/boot/grub/grub.cfg
+	cp $(grub_config) $(OBJ)/iso/boot/grub/grub.cfg
 	$(GRUB_MKRESCUE) -o $@ $(OBJ)/iso
+
+qemu: $(BOOTABLE_ISO)
+	$(QEMU) -cdrom $(BOOTABLE_ISO)
+
+objdump: $(KERNEL)
+	$(OBJDUMP) -hd $(KERNEL)
+
+debug: clean $(BOOTABLE_ISO)
+	$(QEMU) -s -S -cdrom $(BOOTABLE_ISO)
 
 clean:
 	rm -rf $(OBJ)
+	rm -rf $(BOOTABLE_ISO)
